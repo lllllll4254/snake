@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake Spiel (Mit Pause)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f9;
+    }
+    canvas {
+      background-color: #000;
+      margin-top: 20px;
+    }
+    #game-over, #pause {
+      font-size: 32px;
+      color: red;
+      display: none;
+    }
+    #instructions {
+      font-size: 18px;
+      margin: 20px 0;
+    }
+    #intro {
+      display: block;
+    }
+    #game-area {
+      display: none;
+    }
+    #pause-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      font-size: 24px;
+      z-index: 1000;
+    }
+    #score {
+      font-size: 20px;
+      color: rgb(0, 0, 0);
+      position: absolute;
+      top: 10px;
+      left: 10px;
+    }
+  </style>
+</head>
+<body>
+  
+  <div id="intro">
+    <p>Willkommen beim Snake Spiel!</p>
+    <div id="instructions">
+      <p><strong>Spielanleitung:</strong></p>
+      <ul>
+        <li>Steuere die Schlange mit den Pfeiltasten: <strong>Oben</strong>, <strong>Unten</strong>, <strong>Links</strong>, <strong>Rechts</strong>.</li>
+        <li>Fange das Futter, um Punkte zu sammeln. Unterschiedliche Farben bringen unterschiedliche Punktzahlen!</li>
+        <li>Die Schlange wächst mit jedem Futterstück, das du frisst.</li>
+        <li>Vermeide es, gegen die Wand oder den eigenen Körper zu stoßen!</li>
+        <li>Die grauen Hindernisse (Kreis) dürfen nicht berührt werden, da sie das Spiel beenden!</li>
+        <li>Drücke die <strong>Leertaste</strong>, um das Spiel zu pausieren und fortzusetzen.</li>
+        <li>Drücke die <strong>R-Taste</strong>, um das Spiel neu zu starten.</li>
+        <li>Das Spiel startet, wenn du die <strong>G-Taste</strong> drückst.</li>
+      </ul>
+    </div>
+  </div>
+  
+  <div id="game-area">
+    <canvas id="gameCanvas" width="800" height="800"></canvas>
+    <p id="game-over">Verloren!</p>
+    <p id="pause">Spiel Pausiert</p>
+    <div id="score">Punkte: 0</div>
+  </div>
+
+  <div id="pause-overlay">
+    <p>Das Spiel ist pausiert. Drücke <strong>Leertaste</strong>, um fortzusetzen.</p>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      const gameOverText = document.getElementById("game-over");
+      const pauseText = document.getElementById("pause");
+      const scoreDisplay = document.getElementById("score");
+      const introDiv = document.getElementById("intro");
+      const gameArea = document.getElementById("game-area");
+      const pauseOverlay = document.getElementById("pause-overlay");
+
+      const gridSize = 20;
+      let initialWidth = 800;
+      let initialHeight = 800;
+      let tileCountX = initialWidth / gridSize;
+      let tileCountY = initialHeight / gridSize;
+
+      let snake, food, dx, dy, score, gameRunning, changeDirectionLock, speed, difficulty, isPaused;
+      let foodInterval;
+      let obstacles = [];
+      let eatenFoodCount = 0;
+      let snakeColor = "green";  // Startfarbe der Schlange
+
+      // Lade das Totenkopf-Bild
+      const skullImage = new Image();
+      skullImage.src = 'https://example.com/path/to/skull-image.png'; // Ersetze dies durch den Pfad zu deinem Totenkopf-Bild
+
+      difficulty = "normal";
+      if (difficulty === 'easy') {
+        speed = 200;
+      } else if (difficulty === 'normal') {
+        speed = 150;
+      } else {
+        speed = 100;
+      }
+
+      function initGame() {
+        canvas.width = initialWidth;
+        canvas.height = initialHeight;
+        tileCountX = canvas.width / gridSize;
+        tileCountY = canvas.height / gridSize;
+
+        snake = [{ x: 20, y: 20 }];
+        food = generateMultipleFood(5);
+        dx = gridSize;
+        dy = 0;
+        score = 0;
+        gameRunning = true;
+        isPaused = false;
+        changeDirectionLock = false;
+
+        obstacles = [];
+        eatenFoodCount = 0;
+
+        gameOverText.style.display = 'none';
+        pauseText.style.display = 'none';
+        pauseOverlay.style.display = 'none';
+        gameArea.style.display = 'block';
+        introDiv.style.display = 'none';
+
+        gameLoop();
+
+        clearInterval(foodInterval);
+        foodInterval = setInterval(function() {
+          if (!isPaused) {
+            food.push(...generateMultipleFood(5));
+          }
+        }, 11000);
+
+        setInterval(function() {
+          if (!isPaused && gameRunning) {
+            increaseCanvasSize();
+          }
+        }, 600000);
+      }
+
+      function gameLoop() {
+        if (!gameRunning || isPaused) return;
+
+        moveSnake();
+        if (isGameOver()) {
+          gameRunning = false;
+          showGameOver(); 
+          return;
+        }
+
+        if (eatenFoodCount % 50 === 0 && eatenFoodCount > 0) {
+          speed = Math.max(50, speed - 10); // Die Geschwindigkeit wird um 10 reduziert, aber nicht kleiner als 50
+        }
+
+        clearCanvas();
+        drawBorder();
+        drawSnake();
+        drawFood();
+        drawObstacles();
+        drawScoreAtSnakeHead();
+        updateScoreDisplay();
+
+        setTimeout(gameLoop, speed);
+      }
+
+      function moveSnake() {
+        const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+        snake.unshift(head);
+
+        food.forEach((f, index) => {
+          if (head.x === f.x && head.y === f.y) {
+            score += f.points;
+            food.splice(index, 1);
+            snake.push({ x: head.x - dx, y: head.y - dy });
+            eatenFoodCount++;
+
+            // Ändere die Farbe der Schlange auf die Farbe des gefressenen Futters
+            snakeColor = f.color;
+
+            if (eatenFoodCount >= 5) {
+              generateObstacles();
+              eatenFoodCount = 0;
+            }
+          }
+        });
+
+        if (food.length === 0 && !isPaused) {
+          food = generateMultipleFood(5);
+        }
+
+        if (food.length > 0) {
+          snake.pop();
+        }
+      }
+
+      function clearCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function drawBorder() {
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function drawSnake() {
+        ctx.fillStyle = snakeColor;  // Benutze die Farbe der Schlange
+        snake.forEach(segment => {
+          ctx.fillRect(segment.x, segment.y, gridSize, gridSize);
+        });
+      }
+
+      function drawFood() {
+        food.forEach(f => {
+          ctx.fillStyle = f.color;
+          ctx.fillRect(f.x, f.y, gridSize, gridSize);
+        });
+      }
+
+      function drawObstacles() {
+        obstacles.forEach(obstacle => {
+          // Zeichne das Hindernis als Kreis
+          ctx.beginPath();
+          ctx.arc(obstacle.x + gridSize / 2, obstacle.y + gridSize / 2, gridSize / 2, 0, 2 * Math.PI);
+          ctx.fillStyle = "gray";
+          ctx.fill();
+          ctx.closePath();
+        });
+      }
+
+      // Erweitertes Futterfarben-Array mit 30 Farben und zugeordneten Punktzahlen
+      const foodPoints = {
+        'red': 10,
+        'yellow': 20,
+        'blue': 30,
+        'purple': 40,
+        'orange': 50,
+        'green': 60,
+        'pink': 70,
+        'brown': 80,
+        'cyan': 90,
+        'lime': 100,
+        'violet': 110,
+        'indigo': 120,
+        'magenta': 130,
+        'lightgreen': 140,
+        'lightblue': 150,
+        'darkred': 160,
+        'darkblue': 170,
+        'darkgreen': 180,
+        'turquoise': 190,
+        'navy': 200,
+        'crimson': 210,
+        'gold': 220,
+        'silver': 230,
+        'peachpuff': 240,
+        'lightcoral': 250,
+        'lightgoldenrodyellow': 260,
+        'mediumseagreen': 270,
+        'lightpink': 280,
+        'lightgray': 290,
+        'seashell': 300,
+        'mediumorchid': 310
+      };
+
+      function generateFood() {
+        const colors = Object.keys(foodPoints); // Farbpalette
+        const randomIndex = Math.floor(Math.random() * colors.length);
+
+        let newFoodPosition;
+        do {
+          newFoodPosition = {
+            x: Math.floor(Math.random() * tileCountX) * gridSize,
+            y: Math.floor(Math.random() * tileCountY) * gridSize,
+          };
+        } while (isFoodOnSnake(newFoodPosition));
+
+        const selectedColor = colors[randomIndex];
+
+        return {
+          x: newFoodPosition.x,
+          y: newFoodPosition.y,
+          color: selectedColor,
+          points: foodPoints[selectedColor],
+        };
+      }
+
+      function generateMultipleFood(count) {
+        let foodArray = [];
+        for (let i = 0; i < count; i++) {
+          foodArray.push(generateFood());
+        }
+        return foodArray;
+      }
+
+      function generateObstacles() {
+        let newObstacle;
+        do {
+          newObstacle = {
+            x: Math.floor(Math.random() * tileCountX) * gridSize,
+            y: Math.floor(Math.random() * tileCountY) * gridSize,
+          };
+        } while (isFoodOnSnake(newObstacle) || isObstacleOnSnake(newObstacle));
+
+        obstacles.push(newObstacle);
+      }
+
+      function isFoodOnSnake(position) {
+        return snake.some(segment => segment.x === position.x && segment.y === position.y);
+      }
+
+      function isObstacleOnSnake(position) {
+        return snake.some(segment => segment.x === position.x && segment.y === position.y);
+      }
+
+      function isGameOver() {
+        const head = snake[0];
+
+        for (let i = 0; i < obstacles.length; i++) {
+          if (head.x === obstacles[i].x && head.y === obstacles[i].y) {
+            return true;
+          }
+        }
+
+        for (let i = 1; i < snake.length; i++) {
+          if (head.x === snake[i].x && head.y === snake[i].y) {
+            return true;
+          }
+        }
+
+        if (head.x < 0 || head.x >= canvas.width || head.y < 0 || head.y >= canvas.height) {
+          return true;
+        }
+
+        return false;
+      }
+
+      function increaseCanvasSize() {
+        if (!isPaused && gameRunning) {
+          canvas.width += 20;
+          canvas.height += 20;
+          tileCountX = canvas.width / gridSize;
+          tileCountY = canvas.height / gridSize;
+        }
+      }
+
+      function drawScoreAtSnakeHead() {
+        const head = snake[0];
+        ctx.fillStyle = 'white';
+        ctx.font = '18px Arial';
+        ctx.fillText(`Punkte: ${score}`, head.x, head.y - 10);
+      }
+
+      function updateScoreDisplay() {
+        scoreDisplay.textContent = `Punkte: ${score}`;
+      }
+
+      function changeDirection(event) {
+        if (changeDirectionLock) return;
+
+        if (event.key === "ArrowUp" && dy === 0) {
+          dx = 0;
+          dy = -gridSize;
+        } else if (event.key === "ArrowDown" && dy === 0) {
+          dx = 0;
+          dy = gridSize;
+        } else if (event.key === "ArrowLeft" && dx === 0) {
+          dx = -gridSize;
+          dy = 0;
+        } else if (event.key === "ArrowRight" && dx === 0) {
+          dx = gridSize;
+          dy = 0;
+        }
+
+        changeDirectionLock = true;
+        setTimeout(() => changeDirectionLock = false, 150);
+      }
+
+      function showGameOver() {
+        gameOverText.style.display = 'block';
+        gameOverText.style.position = 'absolute';
+        gameOverText.style.top = '50%';
+        gameOverText.style.left = '50%';
+        gameOverText.style.transform = 'translate(-50%, -50%)';
+      }
+
+      document.addEventListener("keydown", function (event) {
+        if (event.code === "Space") {
+          isPaused = !isPaused;
+          if (isPaused) {
+            pauseText.style.display = 'block';
+            pauseOverlay.style.display = 'flex';
+          } else {
+            pauseText.style.display = 'none';
+            pauseOverlay.style.display = 'none';
+            gameLoop();
+          }
+        } else if (event.code === "KeyR") {
+          initGame();
+        } else if (event.code === "KeyG" && introDiv.style.display === 'block') {
+          introDiv.style.display = 'none';
+          initGame();
+        }
+
+        if (!isPaused) {
+          changeDirection(event);
+        }
+      });
+
+      introDiv.style.display = 'block';
+    });
+  </script>
+</body>
+</html>
